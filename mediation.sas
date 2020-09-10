@@ -4,8 +4,17 @@ interaction=,casecontrol=false,output=reduced,c=,boot=,cens=);
 
 */data house keeping*/;
 
+/* 2020-03-30 Modified by @kaz-yos */
+/* https://communities.sas.com/t5/SAS-Programming/Applying-countw-to-an-empty-string/td-p/15285 */
+%if (&cvar^=) %then %do;
+/* This only works with an non-empty &cvar. */
+%let nc=%sysfunc(countw(&cvar));
+%end;
+%else %do;
+/* Empty case */
+%let nc=0;
+%end;
 
- %let nc=%sysfunc(countw(&cvar));
  %put There are &nc confounders in the string "&cvar";
 
 
@@ -2283,34 +2292,66 @@ run;
 		%if &cvar^= %then %do;
 			%if &casecontrol^=true %then %do;
 proc reg data=data1 covout
-outest=out2(drop=_model_ _type_ _name_ _depvar_ &mvar)  ;
-model  &mvar=&avar &cvar ;
-proc print;
+outest=out2(drop=_model_ _type_ _name_ _depvar_ &mvar _IN_ _P_ _SSE_ _RSQ_)  ;
+model  &mvar=&avar &cvar / sse; /* 2020-09-04 @kaz-yos added / sse based on Yi Li's input. */
+/* 2020-09-05 @kaz-yos extract  */
+/* error degree of freedom (EDF): sample size - number of parameters */
+/* https://www.lexjansen.com/nesug/nesug04/pm/pm13.pdf */
+data out2;
+    set out2;
+    if _N_ = 1 then
+        call symput("edf", _EDF_);
+    drop _EDF_;
+proc print data=out2;
 run;
 			%end;
 			%if &casecontrol=true %then %do;
 proc reg data=data1 covout
-outest=out2(drop=_model_ _type_ _name_ _depvar_  &mvar)  ;
+outest=out2(drop=_model_ _type_ _name_ _depvar_  &mvar _IN_ _P_ _SSE_ _RSQ_)  ;
 where &yvar=0;
-model  &mvar=&avar &cvar;
-proc print;
+model  &mvar=&avar &cvar / sse; /* 2020-09-04 @kaz-yos added / sse based on Yi Li's input. */
+/* 2020-09-05 @kaz-yos */
+/* error degree of freedom (EDF): sample size - number of parameters */
+/* https://www.lexjansen.com/nesug/nesug04/pm/pm13.pdf */
+data out2;
+    set out2;
+    if _N_ = 1 then
+        call symput("edf", _EDF_);
+    drop _EDF_;
+proc print data=out2;
 run;
 			%end;
 		%end;
 		%if  &cvar= %then %do;
 			%if &casecontrol^=true %then %do;
 proc reg data=data1 covout
-outest=out2(drop=_model_ _type_ _name_ _depvar_  &mvar)  ;
-model  &mvar=&avar ;
-proc print;
+outest=out2(drop=_model_ _type_ _name_ _depvar_  &mvar _IN_ _P_ _SSE_ _RSQ_)  ;
+model  &mvar=&avar / sse; /* 2020-09-04 @kaz-yos added / sse based on Yi Li's input. */
+/* 2020-09-05 @kaz-yos */
+/* error degree of freedom (EDF): sample size - number of parameters */
+/* https://www.lexjansen.com/nesug/nesug04/pm/pm13.pdf */
+data out2;
+    set out2;
+    if _N_ = 1 then
+        call symput("edf", _EDF_);
+    drop _EDF_;
+proc print data=out2;
 run;
 			%end;
 			%if &casecontrol=true %then %do;
 proc reg data=data1 covout
-outest=out2(drop=_model_ _type_ _name_ _depvar_ &mvar)  ;
+outest=out2(drop=_model_ _type_ _name_ _depvar_ &mvar _IN_ _P_ _SSE_ _RSQ_)  ;
 where &yvar=0;
-model  &mvar=&avar;
-proc print;
+model  &mvar=&avar / sse; /* 2020-09-04 @kaz-yos added / sse based on Yi Li's input. */
+/* 2020-09-05 @kaz-yos */
+/* error degree of freedom (EDF): sample size - number of parameters */
+/* https://www.lexjansen.com/nesug/nesug04/pm/pm13.pdf */
+data out2;
+    set out2;
+    if _N_ = 1 then
+        call symput("edf", _EDF_);
+    drop _EDF_;
+proc print data=out2;
 run;
 			%end;
 		%end;
@@ -2430,8 +2471,14 @@ A=exp(beta0+beta1*&a0);
 B=(1+A);
 D=exp(beta0+beta1*&a1);
 E=(1+D);
-x=(theta2)*((D*E-D**2)/(E**2)-(A*B-B**2)/(B**2));
-w=(theta2)*(&a1*(D*E-D**2)/(E**2)-&a0*(A*B-B**2)/(B**2));
+/* Changed by @kaz-yos on 2020-04-01 based on VV2013 Appendix p14. */
+/* The squared terms in the numerator is different from the denominator. */
+/* Corrected from
+x=(theta2)*((D*E-D**2)/(E**2)-(A*B-B**2)/(B**2));*/
+x=(theta2)*((D*E-D**2)/(E**2)-(A*B-A**2)/(B**2));
+/* Corrected from
+w=(theta2)*(&a1*(D*E-D**2)/(E**2)-&a0*(A*B-B**2)/(B**2)); */
+w=(theta2)*(&a1*(D*E-D**2)/(E**2)-&a0*(A*B-A**2)/(B**2));
 t=t(D/E-A/B);
 s=(&a1-&a0);
 gamma[3,]=x||w||zero||s||t;
@@ -2610,7 +2657,14 @@ z3=J(nrow(V2),1,0);
 A= V2 || zero2 ||z3;
 B= zero1 || V1||z2;
 zeros=J(1,nrow(V1)+nrow(V2),0);
-D= zeros ||s2;
+/* @kaz-yos on 2020-09-06 */
+/* This is wrong. It should be the following based on V2015 p470.
+where n = sample size, p = length(betas), s2 = sigma^2
+(n - p) is _EDF_ (error degrees of freedom) in PROC REG
+D= zeros || ((2 * (s2**2)) / (n - p)) */
+D= zeros || ((2 * (s2**2)) / &edf);
+/* Old and wrong
+D= zeros ||s2; */
 sigma= A // B//D;
 zero=0;
 one=1;
@@ -2660,12 +2714,12 @@ x0=theta3*&a1;
 w=theta3*t(cmean);
 h0=beta0+beta1*&a1+(beta2)*t(cmean);
 gamma[4,]=theta3|| x0|| t(w)|| zero|| one|| zero|| t(h0)||z1;
-x0=theta2+theta3*&a1;
+x0=theta2+theta3*&a1;                   /* This is the same as x1 except for a1. */
 w0=beta1*&a1;
-gamma[5,]=zero|| x0|| z1|| zero||zero|| beta1|| w0 || z1;
-x1=theta2+theta3*&a0;
+gamma[5,]=zero|| x0|| z1|| zero||zero|| beta1|| w0 || z1; /* m-tnie uses x1. */
+x1=theta2+theta3*&a0;                   /* This is the same as x0 except for a0. */
 w1=beta1*&a0;
-gamma[3,]=zero|| x1|| z1|| zero||zero|| beta1|| w1 || z1;
+gamma[3,]=zero|| x1|| z1|| zero||zero|| beta1|| w1 || z1; /* m-pnie uses x0. */
 D=theta3*(cmean);
 A=(theta3*&a1+theta3*&a0+theta2);
 B=beta0+beta1*(&a1+&a0)+beta2*t(cmean);
@@ -2681,7 +2735,7 @@ effect[,9]=(theta2*beta1+theta3*beta1*&a0)*(&a1-&a0);
 */CONDITIONAL TNDE*/;
 effect[,10]=(theta1+theta3*beta0+theta3*beta1*&a1+(theta3*beta2*t(c)))*(&a1-&a0);
 */ CONDITIONAL TNIE*/;
-effect[,11]=(theta2*beta1+theta3*beta1*&a1)*(&a1-&a0);
+effect[,11]=(theta2*beta1+theta3*beta1*&a1)*(&a1-&a0); /* cond tnie expression */
 */te conditional*/;
 effect[,12]=(theta1+theta3*beta0+theta3*beta1*&a0+(theta3*beta2*t(c))+theta2*beta1+theta3*beta1*&a1)*(&a1-&a0);
 *gamma=J(1,2*&nc+6);
@@ -2693,11 +2747,17 @@ gamma[8,]= theta3|| x1|| t(w) || zero|| one|| zero|| t(h1) || z1;
 x0=theta3*&a1;
 h0=beta0+beta1*&a1+(beta2)*t(c);
 gamma[10,]=theta3|| x0|| t(w)|| zero|| one|| zero|| t(h0)||z1;
+/* The following line defining x0 was added by @kaz-yos on 2020-03-28 following V2015 p466.
+This is the mreg linear, yreg linear, interaction true, cvar non-empty case.
+This line was originally missing, causing gamma[11,] (Gamma for cond tnie) to refer to x0 defined
+for gamma[10,] (Gamma for cond tnde). The second slot for gamma[11,] is the partial derivative of
+effect[,11] expression above wrt beta1. So it should be (theta2 + theta3 * a1). */
+x0=theta2+theta3*&a1;
 w0=beta1*&a1;
-gamma[11,]=zero|| x0|| z1|| zero||zero|| beta1|| w0 || z1;
-x1=theta2+theta3*&a0;
+gamma[11,]=zero|| x0|| z1|| zero||zero|| beta1|| w0 || z1; /* Gamma for cond tnie uses x0. */
+x1=theta2+theta3*&a0;    /* This seems correct and the same as x1 for gamma[3,] */
 w1=beta1*&a0;
-gamma[9,]=zero|| x1|| z1|| zero||zero|| beta1|| w1 || z1;
+gamma[9,]=zero|| x1|| z1|| zero||zero|| beta1|| w1 || z1;  /* Gamma for cond pnie uses x1.*/
 D=theta3*(c);
 A=(theta3*&a1+theta3*&a0+theta2);
 B=beta0+beta1*(&a1+&a0)+beta2*t(c);
@@ -2763,9 +2823,19 @@ A=exp(beta0+beta1*&a0+beta2*t(cmean));
 B=(1+A);
 D=exp(beta0+beta1*&a1+beta2*t(cmean));
 E=(1+D);
-x=theta3*(&a1-&a0)*(A*B-B**2)/(B**2)+(theta2+theta3*&a1)*((D*E-D**2)/(E**2)-(A*B-B**2)/(B**2));
-w=&a0*theta3*(&a1-&a0)*(A*B-B**2)/(B**2)+(theta2+theta3*&a1)*(&a1*((D*E-D**2)/(E**2))-&a0*((A*B-B**2)/(B**2)));
-y=theta3*cmean*(&a1-&a0)*((A*B-B**2)/(B**2))+(theta2+theta3*&a1)*(((D*E-D**2)/(E**2))-((A*B-B**2)/(B**2)));
+/* Gamma_te corrected by @kaz-yos on 2020-04-01 based on VV2013 Appendix p14. */
+/* The squared terms in the numerator should be different from the denominator. */
+/* Corrected from
+x=theta3*(&a1-&a0)*(A*B-B**2)/(B**2)+(theta2+theta3*&a1)*((D*E-D**2)/(E**2)-(A*B-B**2)/(B**2)); */
+x=theta3*(&a1-&a0)*(A*B-A**2)/(B**2)+(theta2+theta3*&a1)*((D*E-D**2)/(E**2)-(A*B-A**2)/(B**2));
+/* Corrected from
+w=&a0*theta3*(&a1-&a0)*(A*B-B**2)/(B**2)+(theta2+theta3*&a1)*(&a1*((D*E-D**2)/(E**2))-&a0*((A*B-B**2)/(B**2))); */
+w=&a0*theta3*(&a1-&a0)*(A*B-A**2)/(B**2)+(theta2+theta3*&a1)*(&a1*((D*E-D**2)/(E**2))-&a0*((A*B-A**2)/(B**2)));
+/* Corrected from
+y=theta3*cmean*(&a1-&a0)*((A*B-B**2)/(B**2))+(theta2+theta3*&a1)*(((D*E-D**2)/(E**2))-((A*B-B**2)/(B**2))); */
+/* Also cmean was added to the second term of d3. VV2013 Appendix p14 lacks this, but this */
+/* should be there as it is present in the Gamma_tnie d3 in p13. */
+y=theta3*cmean*(&a1-&a0)*((A*B-A**2)/(B**2))+(theta2+theta3*&a1)*cmean*(((D*E-D**2)/(E**2))-((A*B-A**2)/(B**2)));
 s=(&a1-&a0);
 t=t(D/E-A/B);
 r=(&a1-&a0)*t(A/B)+&a1*t;
@@ -2838,13 +2908,30 @@ d6=t(D/X-B/A);
 d7=&a0*d6;
 d8=z1;
 gamma[9,]=d1|| d2 || d3 || d4|| d5|| d6|| d7 || d8;
+/* Several corrections were made by @kaz-yos on 2020-03-28 based on VV2013 Appendix p14.
+This is mreg logistic, yreg linear, interaction true, cvar non-empty case.
+These terms are defined for gamma[12,] for cond te. */
 A=exp(beta0+beta1*&a0+beta2*t(c));
 B=(1+A);
 D=exp(beta0+beta1*&a1+beta2*t(c));
 E=(1+D);
-x=theta3*(&a1-&a0)*(A*B-B**2)/(B**2)+(theta2+theta3*&a1)*(((D*E-D**2)/(E**2))-((A*B-B**2)/(B**2)));
-w=&a0*theta3*(&a1-&a0)*(A*B-B**2)/(B**2)+(theta2+theta3*&a1)*(&a1*((D*E-D**2)/(E**2))-&a0*((A*B-B**2)/(B**2)));
-y=theta3*c*(&a1-&a0)*((A*B-B**2)/(B**2))+(theta2+theta3*&a1)*(((D*E-D**2)/(E**2))-((A*B-B**2)/(B**2)));
+/* x: Two (A*B-B**2)'s were corrected to (A*B-A**2). */
+/* Changed from
+x=theta3*(&a1-&a0)*(A*B-B**2)/(B**2)+(theta2+theta3*&a1)*(((D*E-D**2)/(E**2))-((A*B-B**2)/(B**2))); */
+x=theta3*(&a1-&a0)*(A*B-A**2)/(B**2)+(theta2+theta3*&a1)*(((D*E-D**2)/(E**2))-((A*B-A**2)/(B**2)));
+/* W: Two (A*B-B**2)'s were corrected to (A*B-A**2). */
+/* Changed from
+w=&a0*theta3*(&a1-&a0)*(A*B-B**2)/(B**2)+(theta2+theta3*&a1)*(&a1*((D*E-D**2)/(E**2))-&a0*((A*B-B**2)/(B**2)));*/
+w=&a0*theta3*(&a1-&a0)*(A*B-A**2)/(B**2)+(theta2+theta3*&a1)*(&a1*((D*E-D**2)/(E**2))-&a0*((A*B-A**2)/(B**2)));
+/* y: The second c was added by @kaz-yos on 2020-03-28 based on VV2013 Appendix p14.
+Note that VV2013 Appendix p14 omits this, leaving a (vector + scalar) operation.
+This c should exist as the second term is the contribution from gamma[11,] for cond tnie.
+That is gamma[12,] (Gamma for cond te; p14) is gamma[11,] (Gamma for cond tnie; p13)
++ (a1-a0) * gamma[8,] (Gamma for cond pnde; p12).
+Also two (A*B-B**2)'s were corrected to (A*B-A**2). */
+/* Changed from
+y=theta3*c*(&a1-&a0)*((A*B-B**2)/(B**2))+(theta2+theta3*&a1)*(((D*E-D**2)/(E**2))-((A*B-B**2)/(B**2))); */
+y=theta3*c*(&a1-&a0)*((A*B-A**2)/(B**2))+(theta2+theta3*&a1)*c*(((D*E-D**2)/(E**2))-((A*B-A**2)/(B**2)));
 s=(&a1-&a0);
 t=t(D/E-A/B);
 r=(&a1-&a0)*t(A/B)+&a1*t;
@@ -2886,13 +2973,22 @@ h=t(D/E-A/B);
 gamma[5,]=x|| w|| y|| zero||zero|| h||  z1;
 gamma[3,]=x|| w|| y||zero||zero|| h||  z1;
 
+/* Fixed Gamma_te by @kaz-yos on 2020-04-01 following VV2013 Appendix p14.
+This is the mreg logistic, yreg linear, interaction f, cvar empty case. */
 A=exp(beta0+beta1*&a0+beta2*t(Cmean));
 B=(1+A);
 D=exp(beta0+beta1*&a1+beta2*t(Cmean));
 E=(1+D);
-x=(theta2)*((D*E-E**2)/(E**2)-(A*B-B**2)/(B**2));
-w=((theta2)*(&a1*(D*E-E**2)/(E**2)-&a0*(A*B-B**2)/(B**2)));
-y=(theta2)*Cmean*((D*E-E**2)/(E**2)-(A*B-B**2)/(B**2));
+/* Corrected from
+x=(theta2)*((D*E-E**2)/(E**2)-(A*B-B**2)/(B**2)); */
+x=(theta2)*((D*E-D**2)/(E**2)-(A*B-A**2)/(B**2));
+/* The squared term in the numerator is different from the denominator. */
+/* Corrected from
+w=((theta2)*(&a1*(D*E-E**2)/(E**2)-&a0*(A*B-B**2)/(B**2))); */
+w=((theta2)*(&a1*(D*E-D**2)/(E**2)-&a0*(A*B-A**2)/(B**2)));
+/* Corrected from
+y=(theta2)*Cmean*((D*E-E**2)/(E**2)-(A*B-B**2)/(B**2)); */
+y=(theta2)*Cmean*((D*E-D**2)/(E**2)-(A*B-A**2)/(B**2));
 t=t(D/E-A/B);
 s=(&a1-&a0);
 gamma[6,]=x||w||y||zero||s||t||z1;
@@ -2939,9 +3035,18 @@ A=exp(beta0+beta1*&a0+beta2*t(c));
 B=(1+A);
 D=exp(beta0+beta1*&a1+beta2*t(c));
 E=(1+D);
-x=(theta2)*((D*E-E**2)/(E**2)-(A*B-B**2)/(B**2));
-w=((theta2)*(&a1*(D*E-E**2)/(E**2)-&a0*(A*B-B**2)/(B**2)));
-y=(theta2)*c*((D*E-E**2)/(E**2)-(A*B-B**2)/(B**2));
+/* Several corrections by @kaz-yos on 2020-03-28 based on VV2013 Appendix p14
+This is the mreg logistic, yreg linear, interaction f, cvar non-empty case.
+Note ?**2 terms must be different from the one in the denominator. */
+/* Corrected from
+x=(theta2)*((D*E-E**2)/(E**2)-(A*B-B**2)/(B**2)); */
+x=(theta2)*((D*E-D**2)/(E**2)-(A*B-A**2)/(B**2));
+/* Corrected from
+w=((theta2)*(&a1*(D*E-E**2)/(E**2)-&a0*(A*B-B**2)/(B**2))); */
+w=((theta2)*(&a1*(D*E-D**2)/(E**2)-&a0*(A*B-A**2)/(B**2)));
+/* Corrected from
+y=(theta2)*c*((D*E-E**2)/(E**2)-(A*B-B**2)/(B**2)); */
+y=(theta2)*c*((D*E-D**2)/(E**2)-(A*B-A**2)/(B**2));
 t=t(D/E-A/B);
 s=(&a1-&a0);
 gamma[12,]=x||w||y||zero||s||t||z1;
@@ -3081,7 +3186,15 @@ effect[,5]=(
 (1+exp(theta2+beta0+beta1*&a0+sum(beta2*t(cmean))))
 );
 effect[,6]=effect[,2]*effect[,5];
-gamma[1,]=z|| z1 ;
+/* Modified by @kaz-yos on 2020-04-01 based on V2015 p474 on Gamma_cde. */
+/* This is the mreg logistic, yreg non-linear, int f case.*/
+/* z is defined as z=zero||zero||z1||zero||one||zero; above without common factor (a1-a0).*/
+/* In the case of &yreg^=linear & &mreg=logistic no common factor multiplication is done. */
+/* Confirm looking for "%if (&mreg=logistic & &yreg^=linear) %then %do;" */
+/* So it must be included in Gamma_cde. */
+/* Changed from
+gamma[1,]=z|| z1 ; */
+gamma[1,]=(z|| z1) * (&a1-&a0);
 A=exp(theta2+beta0+beta1*&a0+beta2*t(Cmean));
 B=(1+exp(theta2+beta0+beta1*&a0+beta2*t(Cmean)));
 D=exp(theta2+beta0+beta1*&a0+beta2*t(Cmean));
@@ -3127,8 +3240,28 @@ F=exp(beta0+beta1*&a0+beta2*t(Cmean));
 G=(1+exp(beta0+beta1*&a0+beta2*t(Cmean)));
 H=exp(beta0+beta1*&a1+beta2*t(Cmean));
 I=(1+exp(beta0+beta1*&a1+beta2*t(Cmean)));
-s=F/G-H/I+A/B-D/E;
-x=&a1*F/G-&a0*H/I+&a0*A/B-&a1*D/E;
+/* Added by @kaz-yos on 2020-04-01 based on V2015 p474. */
+/* Q' = A/B; B' = D/E; K' = H/I; D' = F/G */
+/* (D'+Q') - (K'+B') = (F/G + A/B) - (H/I + D/E)  */
+/* Changed from
+s=F/G-H/I+A/B-D/E; (cosmetic change only) */
+s=(F/G + A/B) - (H/I + D/E);
+/* a0(D'-B') + a(Q'-K') = &a0 * (F/G - D/E) + &a1 * (A/B - H/I) */
+/* This change needs verification. VV2013 and V2015 only cover Gamma_tnie. */
+/* Reasoning by @kaz-yos on 2020-04-02. */
+/* Based on Pearl's decomposition (V2015 p465), the treatment indexing the outcome model
+ * sum_m E[Y|a1 <- this one ,m,c] {P(m|a1,c) - P(m|a0,c)} is the "a1" that makes it
+ * _total_ NIE. Thus, this a1 in the outcome model is associated with theta1 and theta3.
+ * Thus, in the OR^TNIE expression in V2015 p473, a1 associated with theta3 are the ones
+ * that need to change to a0 to give the OR^PNIE expression. In the Gamma_tnie to Gamma_pnie
+ * change, the a1 -> a0 change should thus only occur for the terms involving theta3.
+ * In the d2 expression (V2015 p474), These are only in Q and B terms. a0 and a1 in front of
+ * [D-B] and [Q-K], respectively, come from the terms involving beta1 (d2 is a partial wrt beta1).
+ * Thus, these should not be changed and remain the same as the corresponding term in Gamma_tnie.
+ */
+/* Changed from
+x=&a1*F/G-&a0*H/I+&a0*A/B-&a1*D/E; */
+x=&a0 * (F/G - D/E) + &a1 * (A/B - H/I);
 w=Cmean*(s);
 k=(A/B-D/E);
 gamma[3,]=s|| x|| w || zero||zero||k||z1;
@@ -3171,7 +3304,15 @@ effect[,11]=(
 (1+exp(theta2+beta0+beta1*&a0+sum(beta2*t(c))))
 );
 effect[,12]=effect[,8]*effect[,11];
-gamma[7,]=z||z1;
+/* Modified by @kaz-yos on 2020-04-01 based on V2015 p474 on Gamma_cde. */
+/* This is the mreg logistic, yreg non-linear, int f, cvar non-empty case.*/
+/* z is defined as z=zero||zero||z1||zero||one||zero; above without common factor (a1-a0).*/
+/* In the case of &yreg^=linear & &mreg=logistic no common factor multiplication is done. */
+/* Confirm looking for "%if (&mreg=logistic & &yreg^=linear) %then %do;" */
+/* So it must be included in Gamma_cde. */
+/* Changed from
+gamma[7,]=z||z1; */
+gamma[7,]=(z||z1) * (&a1-&a0);
 A=exp(theta2+beta0+beta1*&a0+beta2*t(c));
 B=(1+exp(theta2+beta0+beta1*&a0+beta2*t(c)));
 D=exp(theta2+beta0+beta1*&a0+beta2*t(c));
@@ -3217,8 +3358,28 @@ F=exp(beta0+beta1*&a0+beta2*t(c));
 G=(1+exp(beta0+beta1*&a0+beta2*t(c)));
 H=exp(beta0+beta1*&a1+beta2*t(c));
 I=(1+exp(beta0+beta1*&a1+beta2*t(c)));
-s=F/G-H/I+A/B-D/E;
-x=&a1*F/G-&a0*H/I+&a0*A/B-&a1*D/E;
+/* Added by @kaz-yos on 2020-04-01 based on V2015 p474. */
+/* Q' = A/B; B' = D/E; K' = H/I; D' = F/G */
+/* (D'+Q') - (K'+B') = (F/G + A/B) - (H/I + D/E)  */
+/* Changed from
+s=F/G-H/I+A/B-D/E; (cosmetic change only) */
+s=(F/G + A/B) - (H/I + D/E);
+/* a0(D'-B') + a(Q'-K') = &a0 * (F/G - D/E) + &a1 * (A/B - H/I) */
+/* This change needs verification. VV2013 and V2015 only cover Gamma_tnie. */
+/* Reasoning by @kaz-yos on 2020-04-02. */
+/* Based on Pearl's decomposition (V2015 p465), the treatment indexing the outcome model
+ * sum_m E[Y|a1 <- this one ,m,c] {P(m|a1,c) - P(m|a0,c)} is the "a1" that makes it
+ * _total_ NIE. Thus, this a1 in the outcome model is associated with theta1 and theta3.
+ * Thus, in the OR^TNIE expression in V2015 p473, a1 associated with theta3 are the ones
+ * that need to change to a0 to give the OR^PNIE expression. In the Gamma_tnie to Gamma_pnie
+ * change, the a1 -> a0 change should thus only occur for the terms involving theta3.
+ * In the d2 expression (V2015 p474), These are only in Q and B terms. a0 and a1 in front of
+ * [D-B] and [Q-K], respectively, come from the terms involving beta1 (d2 is a partial wrt beta1).
+ * Thus, these should not be changed and remain the same as the corresponding term in Gamma_tnie.
+ */
+/* Changed from
+x=&a1*F/G-&a0*H/I+&a0*A/B-&a1*D/E; */
+x=&a0 * (F/G - D/E) + &a1 * (A/B - H/I);
 w=c*(s);
 k=(A/B-D/E);
 gamma[9,]=s|| x|| w || zero||zero||k||z1;
@@ -3262,7 +3423,15 @@ effect[,5]=(
 (1+exp(theta2+theta3*&a1+beta0+beta1*&a0+sum(beta2*t(cmean))))
 );
 effect[,6]=effect[,2]*effect[,5];
-gamma[1,]=z||&m || z1 ;
+/* Modified by @kaz-yos on 2020-04-01 based on V2015 p474 on Gamma_cde. */
+/* This is the mreg logistic, yreg non-linear, int t case.*/
+/* z is defined as z=zero||zero||z1||zero||one||zero; above without common factor (a1-a0).*/
+/* In the case of &yreg^=linear & &mreg=logistic no common factor multiplication is done. */
+/* Confirm looking for "%if (&mreg=logistic & &yreg^=linear) %then %do;" */
+/* So it must be included in Gamma_cde. */
+/* Changed from
+gamma[1,]=z||&m || z1 ; */
+gamma[1,]=(z||&m || z1) * (&a1-&a0);
 A=exp(theta2+theta3*&a1+beta0+beta1*&a0+beta2*t(cmean));
 B=(1+exp(theta2+theta3*&a1+beta0+beta1*&a0+beta2*t(cmean)));
 D=exp(theta2+theta3*&a0+beta0+beta1*&a0+beta2*t(cmean));
@@ -3312,8 +3481,28 @@ F=exp(beta0+beta1*&a0+beta2*t(Cmean));
 G=(1+exp(beta0+beta1*&a0+beta2*t(Cmean)));
 H=exp(beta0+beta1*&a1+beta2*t(Cmean));
 I=(1+exp(beta0+beta1*&a1+beta2*t(Cmean)));
+/* Added by @kaz-yos on 2020-04-01 based on V2015 p474. */
+/* Q' = A/B; B' = D/E; K' = H/I; D' = F/G */
+/* (D'+Q') - (K'+B') = (F/G + A/B) - (H/I + D/E)  */
+/* Changed from
+s=F/G-H/I+A/B-D/E; (cosmetic change only) */
 s=F/G-H/I+A/B-D/E;
-x=&a1*F/G-&a0*H/I+&a0*A/B-&a1*D/E;
+/* a0(D'-B') + a(Q'-K') = &a0 * (F/G - D/E) + &a1 * (A/B - H/I) */
+/* This change needs verification. VV2013 and V2015 only cover Gamma_tnie. */
+/* Reasoning by @kaz-yos on 2020-04-02. */
+/* Based on Pearl's decomposition (V2015 p465), the treatment indexing the outcome model
+ * sum_m E[Y|a1 <- this one ,m,c] {P(m|a1,c) - P(m|a0,c)} is the "a1" that makes it
+ * _total_ NIE. Thus, this a1 in the outcome model is associated with theta1 and theta3.
+ * Thus, in the OR^TNIE expression in V2015 p473, a1 associated with theta3 are the ones
+ * that need to change to a0 to give the OR^PNIE expression. In the Gamma_tnie to Gamma_pnie
+ * change, the a1 -> a0 change should thus only occur for the terms involving theta3.
+ * In the d2 expression (V2015 p474), These are only in Q and B terms. a0 and a1 in front of
+ * [D-B] and [Q-K], respectively, come from the terms involving beta1 (d2 is a partial wrt beta1).
+ * Thus, these should not be changed and remain the same as the corresponding term in Gamma_tnie.
+ */
+/* Changed from
+x=&a1*F/G-&a0*H/I+&a0*A/B-&a1*D/E; */
+x=&a0 * (F/G - D/E) + &a1 * (A/B - H/I);
 w=Cmean*(s);
 l=A/B-D/E;
 k=&a0*(A/B-D/E);
@@ -3358,7 +3547,15 @@ effect[,11]=(
 (1+exp(theta2+theta3*&a1+beta0+beta1*&a0+sum(beta2*t(c))))
 );
 effect[,12]=effect[,8]*effect[,11];
-gamma[7,]=z||&m || z1;
+/* Modified by @kaz-yos on 2020-04-01 based on V2015 p474 on Gamma_cde. */
+/* This is the mreg logistic, yreg non-linear, int t, cvar non-empty case.*/
+/* z is defined as z=zero||zero||z1||zero||one||zero; above without common factor (a1-a0).*/
+/* In the case of &yreg^=linear & &mreg=logistic no common factor multiplication is done. */
+/* Confirm looking for "%if (&mreg=logistic & &yreg^=linear) %then %do;" */
+/* So it must be included in Gamma_cde. */
+/* Changed from
+gamma[7,]=z||&m || z1; */
+gamma[7,]=(z||&m || z1) * (&a1-&a0);
 A=exp(theta2+theta3*&a1+beta0+beta1*&a0+beta2*t(c));
 B=(1+exp(theta2+theta3*&a1+beta0+beta1*&a0+beta2*t(c)));
 D=exp(theta2+theta3*&a0+beta0+beta1*&a0+beta2*t(c));
@@ -3410,8 +3607,28 @@ F=exp(beta0+beta1*&a0+beta2*t(c));
 G=(1+exp(beta0+beta1*&a0+beta2*t(c)));
 H=exp(beta0+beta1*&a1+beta2*t(c));
 I=(1+exp(beta0+beta1*&a1+beta2*t(c)));
-d1=F/G-H/I+A/B-D/E;
-d2=&a1*F/G-&a0*H/I+&a0*A/B-&a1*D/E;
+/* Added by @kaz-yos on 2020-04-01 based on V2015 p474. */
+/* Q' = A/B; B' = D/E; K' = H/I; D' = F/G */
+/* (D'+Q') - (K'+B') = (F/G + A/B) - (H/I + D/E)  */
+/* Changed from
+d1=F/G-H/I+A/B-D/E; (cosmetic change only) */
+d1=(F/G + A/B) - (H/I + D/E);
+/* a0(D'-B') + a(Q'-K') = &a0 * (F/G - D/E) + &a1 * (A/B - H/I) */
+/* This change needs verification. VV2013 and V2015 only cover Gamma_tnie. */
+/* Reasoning by @kaz-yos on 2020-04-02. */
+/* Based on Pearl's decomposition (V2015 p465), the treatment indexing the outcome model
+ * sum_m E[Y|a1 <- this one ,m,c] {P(m|a1,c) - P(m|a0,c)} is the "a1" that makes it
+ * _total_ NIE. Thus, this a1 in the outcome model is associated with theta1 and theta3.
+ * Thus, in the OR^TNIE expression in V2015 p473, a1 associated with theta3 are the ones
+ * that need to change to a0 to give the OR^PNIE expression. In the Gamma_tnie to Gamma_pnie
+ * change, the a1 -> a0 change should thus only occur for the terms involving theta3.
+ * In the d2 expression (V2015 p474), These are only in Q and B terms. a0 and a1 in front of
+ * [D-B] and [Q-K], respectively, come from the terms involving beta1 (d2 is a partial wrt beta1).
+ * Thus, these should not be changed and remain the same as the corresponding term in Gamma_tnie.
+ */
+/* Changed from
+d2=&a1*F/G-&a0*H/I+&a0*A/B-&a1*D/E; */
+d2=&a0 * (F/G - D/E) + &a1 * (A/B - H/I);
 d3=c*(d1);
 d4=0;
 d5=0;
@@ -3484,7 +3701,14 @@ z3=J(nrow(V2),1,0);
 A= V2 || zero2 ||z3;
 B= zero1 || V1||z2;
 zeros=J(1,nrow(V1)+nrow(V2),0);
-D= zeros ||s2;
+/* @kaz-yos on 2020-09-06 */
+/* This is wrong. It should be the following based on V2015 p470.
+where n = sample size, p = length(betas), s2 = sigma^2
+(n - p) is _EDF_ (error degrees of freedom) in PROC REG
+D= zeros || ((2 * (s2**2)) / (n - p)) */
+D= zeros || ((2 * (s2**2)) / &edf);
+/* Old and wrong
+D= zeros ||s2; */
 sigma= A // B//D;
 zero=0;
 one=1;
@@ -3518,8 +3742,20 @@ gamma[2,]= theta3|| x1||  zero|| one|| zero|| t(h1);
 x0=theta3*&a1;
 h0=beta0+beta1*&a1;
 gamma[4,]=theta3|| x0||zero|| one|| zero|| t(h0);
+/* gamma[5,] (Gamma for marg tnie)
+mreg linear yreg linear interaction t case.
+x0 expression was missing in the following, making gamma[5,] use x0 defined for gamma[4,]
+(Gamma for marg tnde). gamma[5,] is the partial derivative of effect[,5] wrt beta1, thus,
+it should be (theta2 + theta3 * a1). Note that (a1-a0) is factored out. */
+x0=theta2+theta3*&a1; /* Added by @kaz-yos on 2020-04-01 See V2015 p466 Gamma_tnie */
 w0=beta1*&a1;
 gamma[5,]=zero|| x0|| zero||zero|| beta1|| w0 ;
+/* gamma[3,] (Gamma for marg pnie)
+mreg linear yreg linear interaction t case.
+x1 expression was missing in the following, making gamma[3,] use x1 defined for gamma[2,]
+(Gamma for marg pnde). gamma[3,] is the partial derivative of effect[,3] wrt beta1, thus,
+it should be (theta2 + theta3 * a0). Note that (a1-a0) is factored out. */
+x1=theta2+theta3*&a0; /* Added by @kaz-yos on 2020-04-01 Same as x0 except for the a1 -> a0 change. */
 w1=beta1*&a0;
 gamma[3,]=zero|| x1|| zero||zero|| beta1|| w1 ;
 A=(theta3*&a1+theta3*&a0+theta2);
@@ -3569,8 +3805,13 @@ A=exp(beta0+beta1*&a0);
 B=(1+A);
 D=exp(beta0+beta1*&a1);
 E=(1+D);
-x=theta3*(&a1-&a0)*(A*B-B**2)/(B**2)+(theta2+theta3*&a1)*(((D*E-D**2)/(E**2))-((A*B-B**2)/(B**2)));
-w=&a0*theta3*(&a1-&a0)*(A*B-B**2)/(B**2)+(theta2+theta3*&a1)*(&a0*((D*E-D**2)/(E**2))-&a0*((A*B-B**2)/(B**2)));
+/* Fixed by @kaz-yos. Gamma_te expression based on VV2013 Appendix p14. */
+/* Corrected from
+x=theta3*(&a1-&a0)*(A*B-B**2)/(B**2)+(theta2+theta3*&a1)*(((D*E-D**2)/(E**2))-((A*B-B**2)/(B**2))); */
+x=theta3*(&a1-&a0)*(A*B-A**2)/(B**2)+(theta2+theta3*&a1)*(((D*E-D**2)/(E**2))-((A*B-A**2)/(B**2)));
+/* Corrected from
+w=&a0*theta3*(&a1-&a0)*(A*B-B**2)/(B**2)+(theta2+theta3*&a1)*(&a0*((D*E-D**2)/(E**2))-&a0*((A*B-B**2)/(B**2))); */
+w=&a0*theta3*(&a1-&a0)*(A*B-A**2)/(B**2)+(theta2+theta3*&a1)*(&a1*((D*E-D**2)/(E**2))-&a0*((A*B-A**2)/(B**2)));
 s=(&a1-&a0);
 t=t(D/E-A/B);
 r=(&a1-&a0)*t(A/B)+&a1*t;
@@ -3653,7 +3894,14 @@ effect[,5]=(
 (1+exp(beta0+beta1*&a1))*(1+exp(theta2+beta0+beta1*&a0))
 );
 effect[,6]=effect[,2]*effect[,5];
-gamma[1,]=z;
+/* Modified by @kaz-yos on 2020-04-01 based on V2015 p475 on Gamma_cde. */
+/* z is defined as z=zero||zero||z1||zero||one||zero; above without common factor (a1-a0).*/
+/* In the case of &yreg^=linear & &mreg=logistic no common factor multiplication is done. */
+/* Confirm looking for "%if (&mreg=logistic & &yreg^=linear) %then %do;" */
+/* So it must be included in Gamma_cde. */
+/* Changed from
+gamma[1,]=z; */
+gamma[1,]=z * (&a1-&a0);
 A=exp(theta2+beta0+beta1*&a0);
 B=(1+exp(theta2+beta0+beta1*&a0));
 D=exp(theta2+beta0+beta1*&a0);
@@ -3737,7 +3985,14 @@ effect[,5]=(
 );
 effect[,6]=effect[,2]*effect[,5];
 
-gamma[1,]=z||&m;
+/* Changed by @kaz-yos on 2020-04-01 based on V2015 p474. */
+/* z is defined as z=zero||zero||z1||zero||one||zero; above without common factor (a1-a0).*/
+/* In the case of &yreg^=linear & &mreg=logistic no common factor multiplication is done. */
+/* Confirm looking for "%if (&mreg=logistic & &yreg^=linear) %then %do;" */
+/* So it must be included in Gamma_cde. */
+/* Changed from
+gamma[1,]=z||&m; */
+gamma[1,]=(z||&m) * (&a1-&a0);
 A=exp(theta2+theta3*&a1+beta0+beta1*&a0);
 B=(1+exp(theta2+theta3*&a1+beta0+beta1*&a0));
 D=exp(theta2+theta3*&a0+beta0+beta1*&a0);
